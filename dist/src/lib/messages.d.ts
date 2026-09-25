@@ -1,0 +1,36 @@
+export interface Messages {
+    addressPlaceholder?: string;
+    address_1Placeholder?: string;
+    address_2Placeholder?: string;
+    cityPlaceholder?: string;
+    provincePlaceholder?: string;
+    postalCodePlaceholder?: string;
+    countryPlaceholder?: string;
+    firstNamePlaceholder?: string;
+    lastNamePlaceholder?: string;
+    phonePlaceholder?: string;
+    save?: string;
+    saving?: string;
+    locationButton?: string;
+    locationLoading?: string;
+    clear?: string;
+    loadingSuggestions?: string;
+    noSuggestions?: string;
+    invalidAddress?: string;
+    missingField?: string;
+    invalidCountry?: string;
+    invalidPostalCode?: string;
+    invalidCity?: string;
+    invalidProvince?: string;
+    invalidPhone?: string;
+    geolocationPermissionDenied?: string;
+    geolocationPositionUnavailable?: string;
+    geolocationTimeout?: string;
+    geolocationHttpsRequired?: string;
+    networkError?: string;
+    unavailable?: string;
+    addressLabel?: string;
+    suggestionsLabel?: string;
+}
+export declare const defaultMessages: Messages;
+export declare function mergeMessages(overrides?: Partial<Messages>): Messages;
