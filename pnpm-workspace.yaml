@@ -1,5 +1,9 @@
 pmOnFail: ignore
 
+onlyBuiltDependencies:
+  - esbuild
+  - workerd
+
 minimumReleaseAgeExclude:
   - '@next/*'
   - next
