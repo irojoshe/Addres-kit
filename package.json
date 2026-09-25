@@ -28,6 +28,9 @@
     }
   },
   "packageManager": "pnpm@12.6.0",
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild", "workerd"]
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
