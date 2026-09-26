@@ -1,5 +1,5 @@
 'use client'
-import { forwardRef, useEffect, useImperativeHandle, useState, useCallback } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, useCallback } from 'react'
 import { AddressPicker } from './AddressPicker'
 import { LocationButton } from './LocationButton'
 import { MapView } from './MapView'
@@ -52,13 +52,14 @@ export const AddressForm = forwardRef<AddressFormHandle, AddressFormProps>(
 
     void routingProviderProp
     void graphHopperApiKey
-    const addressProvider: AddressProvider = addressProviderProp ?? (() => {
+    // Memoizado: identidad estable para no re-disparar efectos que dependen del provider
+    const addressProvider: AddressProvider = useMemo(() => addressProviderProp ?? (() => {
       try {
         return createDefaultAddressProvider({ locationIqApiKey })
       } catch {
         return createPhotonProvider()
       }
-    })()
+    })(), [addressProviderProp, locationIqApiKey])
 
     const messages = mergeMessages(messagesOverride)
     const { address, setField, setAddressFromData, reset: resetAddress } = useAddressForm(initialAddress)
@@ -67,6 +68,9 @@ export const AddressForm = forwardRef<AddressFormHandle, AddressFormProps>(
     )
     const [error, setError] = useState<string>('')
     const [success, setSuccess] = useState(false)
+    const [verifyStatus, setVerifyStatus] = useState<string | null>(null)
+    const [verifying, setVerifying] = useState(false)
+    const lastForwardQuery = useRef('')
     const [query, setQuery] = useState('')
     const [suggestions, setSuggestions] = useState<Suggestion[]>([])
     const [loadingSuggestions, setLoadingSuggestions] = useState(false)
@@ -118,6 +122,86 @@ export const AddressForm = forwardRef<AddressFormHandle, AddressFormProps>(
       setField(field, value)
       onAddressChange?.(next)
     }
+
+    // Estable (useCallback): LocationButton dispara onLocation en un useEffect
+    // y un callback inline re-crearía el bucle de 300 requests.
+    const handleLocationFound = useCallback(async (coords: Coordinates) => {
+      console.log('[geo] onLocation received:', {
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+        accuracy: coords.accuracy,
+        timestamp: new Date().toISOString(),
+      })
+      if (typeof coords.accuracy === 'number' && coords.accuracy > 1000) {
+        console.warn('[geo] accuracy >1000m — probablemente geolocalización por IP, no GPS')
+      }
+      setCoordinates(coords)
+      try {
+        const fields = await addressProvider.reverse(coords, { language })
+        console.log('[geo] reverse OK:', fields)
+        setAddressFromData({ ...fields, coordinates: coords, source: 'geolocation', verified: true })
+        onLocationFound?.(coords)
+      } catch (err) {
+        console.error('[geo] reverse ERROR:', err)
+        onLocationError?.(err as GeolocationError)
+      }
+    }, [addressProvider, language, setAddressFromData, onLocationFound, onLocationError])
+
+    // Pin movido en el mapa → reverse + actualizar campos
+    const handleMarkerDrag = useCallback(async (coords: Coordinates) => {
+      setCoordinates(coords)
+      try {
+        const fields = await addressProvider.reverse(coords, { language })
+        setAddressFromData({ ...fields, coordinates: coords, source: 'manual', verified: false })
+      } catch {
+        // Se conserva el pin aunque falle el reverse
+      }
+    }, [addressProvider, language, setAddressFromData])
+
+    // Verificar en el mapa: dirección del formulario → forward → centrar pin
+    const verifyOnMap = useCallback(async () => {
+      const q = [address.address_1, address.city, address.province, address.postal_code, address.country_code].filter(Boolean).join(', ')
+      if (!q.trim()) {
+        setVerifyStatus('Escribe una dirección primero')
+        return
+      }
+      setVerifying(true)
+      setVerifyStatus(null)
+      try {
+        const results = await addressProvider.forward(q, { language, countryRestriction, limit: 1 })
+        const first = results[0]
+        if (!first) {
+          setVerifyStatus('No se pudo verificar, ajusta el pin manualmente')
+          return
+        }
+        lastForwardQuery.current = q
+        setCoordinates(first.coordinates)
+        setVerifyStatus('Dirección verificada')
+      } catch {
+        setVerifyStatus('No se pudo verificar, ajusta el pin manualmente')
+      } finally {
+        setVerifying(false)
+      }
+    }, [address, addressProvider, language, countryRestriction])
+
+    // Campos → pin (debounce 800ms). Solo mueve coordenadas, nunca la
+    // dirección, así que no puede realimentarse en bucle.
+    useEffect(() => {
+      const q = [address.address_1, address.city, address.province, address.country_code].filter(Boolean).join(', ')
+      if (!q.trim() || q === lastForwardQuery.current) return
+      const t = setTimeout(async () => {
+        try {
+          const results = await addressProvider.forward(q, { language, countryRestriction, limit: 1 })
+          const first = results[0]
+          if (!first) return
+          lastForwardQuery.current = q
+          setCoordinates(first.coordinates)
+        } catch {
+          // Silencioso: el botón Verificar muestra el error si hace falta
+        }
+      }, 800)
+      return () => clearTimeout(t)
+    }, [address.address_1, address.city, address.province, address.country_code, addressProvider, language, countryRestriction])
 
     const submit = async (event: React.FormEvent) => {
       event.preventDefault()
@@ -206,32 +290,16 @@ export const AddressForm = forwardRef<AddressFormHandle, AddressFormProps>(
             placeholder={messages?.countryPlaceholder || 'País'}
           />
         </label>
-        {showMap && isMapLibreAvailable && <MapView coordinates={coordinates} />}
+        {showMap && isMapLibreAvailable && <MapView coordinates={coordinates} onMarkerDrag={handleMarkerDrag} />}
         {showLocationButton && (
-          <LocationButton
-            onLocation={async (coords: Coordinates) => {
-              console.log('[geo] onLocation received:', {
-                latitude: coords.latitude,
-                longitude: coords.longitude,
-                accuracy: coords.accuracy,
-                timestamp: new Date().toISOString(),
-              })
-              if (typeof coords.accuracy === 'number' && coords.accuracy > 1000) {
-                console.warn('[geo] accuracy >1000m — probablemente geolocalización por IP, no GPS')
-              }
-              setCoordinates(coords)
-              try {
-                const fields = await addressProvider.reverse(coords, { language })
-                console.log('[geo] reverse OK:', fields)
-                setAddressFromData({ ...fields, coordinates: coords, source: 'geolocation', verified: true })
-                onLocationFound?.(coords)
-              } catch (err) {
-                console.error('[geo] reverse ERROR:', err)
-                onLocationError?.(err as GeolocationError)
-              }
-            }}
-          />
+          <LocationButton onLocation={handleLocationFound} />
         )}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+          <button type="button" onClick={verifyOnMap} disabled={verifying}>
+            {verifying ? 'Verificando…' : '✓ Verificar en el mapa'}
+          </button>
+          {verifyStatus && <small role="status">{verifyStatus}</small>}
+        </div>
         <button type="submit" disabled={loadingSuggestions}>
           {messages?.save || 'Guardar'}
         </button>
