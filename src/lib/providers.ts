@@ -50,39 +50,8 @@ function decodePolyline(encoded: string): [number, number][] {
 // https://docs.graphhopper.com/#tag/Routing-API
 // ---------------------------------------------------------------------------
 
-export function createLocationIQProvider(options: AddressProviderOptions = {}): AddressProvider {
-  const apiKey = options.apiKey ?? getEnv('NEXT_PUBLIC_LOCATIONIQ_KEY') ?? ''
-  const endpoint = options.endpoint ?? 'https://api.locationiq.com/v1'
-  const fetcher = createRetryFetcher(options.fetcher ?? fetch, options.retries ?? 2, options.retryDelayMs ?? 350)
-  if (!apiKey) {
-    throw new Error('LocationIQ requiere una API key. Obtén una gratis en https://locationiq.com/register y pásala como { apiKey } o NEXT_PUBLIC_LOCATIONIQ_KEY')
-  }
-  return {
-    async forward(text, opts: ForwardOptions = {}) {
-      const params = query({
-        key: apiKey,
-        q: text,
-        limit: opts.limit ?? 5,
-        countrycodes: opts.countryRestriction?.join(','),
-        'accept-language': opts.language ?? 'es',
-        lat: opts.location?.latitude,
-        lon: opts.location?.longitude,
-      })
-      const data = await json(await fetcher(`${endpoint}/autocomplete?${params}`, { signal: opts.signal, headers: options.headers }))
-      const items = Array.isArray(data) ? data : []
-      return items.map((item: any): Suggestion => ({
-        placeId: String(item.place_id ?? item.osm_id ?? crypto.randomUUID()),
-        description: item.display_name ?? '',
-        mainText: item.address?.name || item.display_name?.split(',')[0]?.trim() || '',
-        secondaryText: item.display_name?.split(',').slice(1).join(',').trim() || '',
-        coordinates: { latitude: parseFloat(item.lat), longitude: parseFloat(item.lon) },
-      }))
-    },
-    async reverse(_coords: Coordinates, _opts: ReverseOptions = {}) {
-      throw new Error('Usa BigDataCloud para geocodificación inversa (createBigDataCloudProvider).')
-    },
-  }
-}
+import { createLocationIQProvider } from './providers/locationiq'
+export { createLocationIQProvider }
 
 export function createBigDataCloudProvider(options: AddressProviderOptions = {}): AddressProvider {
   const endpoint = options.endpoint ?? 'https://api.bigdatacloud.net/data'
@@ -136,14 +105,13 @@ export function createGraphHopperProvider(options: AddressProviderOptions = {}):
   }
 }
 
-/** Híbrido por defecto: forward con LocationIQ + reverse con BigDataCloud. */
+/** Por defecto: LocationIQ para forward y reverse (con calle, verificado en Cuba). */
 export function createDefaultAddressProvider(options: AddressProviderOptions & { locationIqApiKey?: string } = {}): AddressProvider {
   const apiKey = options.locationIqApiKey ?? options.apiKey ?? getEnv('NEXT_PUBLIC_LOCATIONIQ_KEY') ?? ''
-  const forwardProvider = createLocationIQProvider({ ...options, apiKey })
-  const reverseProvider = createBigDataCloudProvider(options)
+  const provider = createLocationIQProvider({ ...options, apiKey })
   return {
-    forward: (text, opts) => forwardProvider.forward(text, opts),
-    reverse: (coords, opts) => reverseProvider.reverse(coords, opts),
+    forward: (text, opts) => provider.forward(text, opts),
+    reverse: (coords, opts) => provider.reverse(coords, opts),
   }
 }
 

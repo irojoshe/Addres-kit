@@ -26,7 +26,7 @@ export default function CheckoutAddress() {
 }
 ```
 
-El formulario funciona con autocompletado, geolocalización y (opcionalmente) mapa. Sin API keys usa Photon + BigDataCloud (sin llave). Con `NEXT_PUBLIC_LOCATIONIQ_KEY` usa LocationIQ para autocompletado y BigDataCloud para reversa; con `NEXT_PUBLIC_GRAPHHOPPER_KEY` usa GraphHopper para rutas. Nunca pongas llaves reales en el repo: usa variables de entorno.
+El formulario funciona con autocompletado, geolocalización y (opcionalmente) mapa. Sin API keys usa Photon + BigDataCloud (sin llave, solo municipio). Con `NEXT_PUBLIC_LOCATIONIQ_KEY` usa LocationIQ para autocompletado, directa y reversa (con calle, verificado en Cuba); con `NEXT_PUBLIC_GRAPHHOPPER_KEY` usa GraphHopper para rutas. Nunca pongas llaves reales en el repo: usa variables de entorno.
 
 ```bash
 NEXT_PUBLIC_LOCATIONIQ_KEY=tu_clave_aqui
@@ -35,14 +35,22 @@ NEXT_PUBLIC_GRAPHHOPPER_KEY=tu_clave_aqui
 
 ## Límites de los servicios
 
-| Servicio | Proveedor | Límite gratuito | ¿API key? | ¿Uso comercial? |
+| Servicio | Proveedor | Límite gratuito | API key | Uso comercial |
 | :--- | :--- | :--- | :--- | :--- |
-| Autocompletado | LocationIQ | 5.000 req/día, 2 req/seg, 60 req/min | Sí (gratis) | Sí |
-| Geocodificación inversa | BigDataCloud | Sin límite de throughput (client-side, fair use) | No | Sí |
-| Enrutamiento | GraphHopper | 500 créditos/día, 5 ubicaciones/solicitud | Sí (gratis) | No (plan gratuito solo no comercial) |
+| Autocompletado | LocationIQ | 5.000/día, 2/seg | Sí (gratis) | Sí |
+| Geocodificación inversa | LocationIQ | 5.000/día, 2/seg | Sí (gratis) | Sí |
+| Geocodificación directa | LocationIQ | 5.000/día, 2/seg | Sí (gratis) | Sí |
+| Enrutamiento | GraphHopper | 500 créditos/día | Sí (gratis) | No (plan gratis no comercial) |
 | Mapa | MapLibre + OpenFreeMap | Sin límites | No | Sí |
+| Cascada provincias | cuba-geodata | Sin límites | No | Sí |
 
-Dos usuarios en el mismo segundo caben en LocationIQ (2 req/seg); BigDataCloud no tiene cuello de botella client-side; GraphHopper limita por día, no por segundo. Para producción usa caché Redis de 24h y cola de 1 req/seg en tu backend (ver `examples/medusa-geocoding-cache/`). El plan gratuito de GraphHopper es no comercial: Basic ~69€/mes o autoaloja OSRM (~20-40€/mes). Muestra atribución © OpenStreetMap.
+Dos usuarios en el mismo segundo caben en LocationIQ (2 req/seg); BigDataCloud (fallback sin llave) no tiene cuello de botella client-side; GraphHopper limita por día, no por segundo. Para producción usa caché Redis de 24h y cola de 1 req/seg en tu backend (ver `examples/medusa-geocoding-cache/`). El plan gratuito de GraphHopper es no comercial: Basic ~69€/mes o autoaloja OSRM (~20-40€/mes). Muestra atribución © OpenStreetMap.
+
+### Cobertura por país
+
+- **Cobertura completa** (calle + número): Europa, EE.UU., Canadá, Australia, Japón.
+- **Cobertura parcial**: Cuba y gran parte de Latinoamérica devuelven calle en ciudades principales vía LocationIQ (verificado: Bayamo devuelve calle, reparto y postal); BigDataCloud solo da municipio.
+- **Sin cobertura**: formulario en cascada + edición manual + GPS en metadata. La librería funciona sin API key (fallback Photon + BigDataCloud, solo municipio).
 
 ## Instalación
 
