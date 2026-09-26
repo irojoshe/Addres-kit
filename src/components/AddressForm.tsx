@@ -70,8 +70,50 @@ export const AddressForm = forwardRef<AddressFormHandle, AddressFormProps>(
     const [error, setError] = useState<string>('')
     const [success, setSuccess] = useState(false)
     const [verifyStatus, setVerifyStatus] = useState<string | null>(null)
+    const [verified, setVerified] = useState<'idle' | 'ok' | 'fail'>('idle')
     const [verifying, setVerifying] = useState(false)
     const lastForwardQuery = useRef('')
+    // cuba-geodata es peer opcional: solo selects si está instalado y país = cu
+    const [cubaMod, setCubaMod] = useState<any>(null)
+    const [cubaProvinces, setCubaProvinces] = useState<string[]>([])
+    useEffect(() => {
+      let cancelled = false
+      ;(async () => {
+        try {
+          const mod: any = await import(
+            /* webpackIgnore: true */ /* @vite-ignore */ 'cuba-geodata'
+          )
+          if (cancelled) return
+          const api = mod?.default ?? mod
+          const raw = api?.getProvinces?.() ?? []
+          const names = Array.isArray(raw)
+            ? raw.map((p: any) => (typeof p === 'string' ? p : p?.name ?? String(p)))
+            : []
+          setCubaMod(api)
+          setCubaProvinces(names)
+        } catch {
+          // No instalado (o sin soporte SQLite en navegador): inputs de texto
+        }
+      })()
+      return () => {
+        cancelled = true
+      }
+    }, [])
+    const useCubaSelects =
+      cubaMod !== null &&
+      cubaProvinces.length > 0 &&
+      address.country_code.trim().toLowerCase() === 'cu'
+    const cubaCities: string[] = useCubaSelects
+      ? (() => {
+          try {
+            const one = cubaMod.getProvinces?.(address.province ?? '', 1) as any
+            const list = Array.isArray(one?.cities) ? one.cities : []
+            return list.map((c: any) => (typeof c === 'string' ? c : c?.name ?? String(c)))
+          } catch {
+            return []
+          }
+        })()
+      : []
     const [query, setQuery] = useState('')
     const [suggestions, setSuggestions] = useState<Suggestion[]>([])
     const [loadingSuggestions, setLoadingSuggestions] = useState(false)
@@ -91,6 +133,7 @@ export const AddressForm = forwardRef<AddressFormHandle, AddressFormProps>(
       setEntre1('')
       setEntre2('')
       setVerifyStatus(null)
+      setVerified('idle')
     }, [resetAddress, initialCoordinates])
 
     // address_1 guarda "Calle [#número]"; se deriva para los inputs.
@@ -139,7 +182,13 @@ export const AddressForm = forwardRef<AddressFormHandle, AddressFormProps>(
     const handleChange = (field: keyof AddressData, value: string) => {
       const next = { ...address, [field]: value }
       setField(field, value)
+      setVerified('idle')
       onAddressChange?.(next)
+    }
+
+    const handleProvinceChange = (value: string) => {
+      handleChange('province', value)
+      handleChange('city', '')
     }
 
     const handleStreetChange = (value: string) => {
@@ -172,6 +221,7 @@ export const AddressForm = forwardRef<AddressFormHandle, AddressFormProps>(
         setAddressFromData({ ...fields, coordinates: coords, source: 'geolocation', verified: true })
         setEntre1('')
         setEntre2('')
+        setVerified('idle')
         onLocationFound?.(coords)
       } catch (err) {
         console.error('[geo] reverse ERROR:', err)
@@ -187,31 +237,38 @@ export const AddressForm = forwardRef<AddressFormHandle, AddressFormProps>(
         setAddressFromData({ ...fields, coordinates: coords, source: 'manual', verified: false })
         setEntre1('')
         setEntre2('')
+        setVerified('idle')
       } catch {
         // Se conserva el pin aunque falle el reverse
       }
     }, [addressProvider, language, setAddressFromData])
 
     // Verificar en el mapa: dirección del formulario → forward → centrar pin
+    // Estados: idle → verifying → ok (verde) | fail (amarillo)
     const verifyOnMap = useCallback(async () => {
       const q = [address.address_1, address.city, address.province, address.postal_code, address.country_code].filter(Boolean).join(', ')
       if (!q.trim()) {
+        setVerified('fail')
         setVerifyStatus('Escribe una dirección primero')
         return
       }
       setVerifying(true)
+      setVerified('idle')
       setVerifyStatus(null)
       try {
         const results = await addressProvider.forward(q, { language, countryRestriction, limit: 1 })
         const first = results[0]
         if (!first) {
+          setVerified('fail')
           setVerifyStatus('No se pudo verificar, ajusta el pin manualmente')
           return
         }
         lastForwardQuery.current = q
         setCoordinates(first.coordinates)
+        setVerified('ok')
         setVerifyStatus('Dirección verificada')
       } catch {
+        setVerified('fail')
         setVerifyStatus('No se pudo verificar, ajusta el pin manualmente')
       } finally {
         setVerifying(false)
@@ -277,92 +334,140 @@ export const AddressForm = forwardRef<AddressFormHandle, AddressFormProps>(
             setSuggestions([])
             setEntre1('')
             setEntre2('')
+            setVerified('idle')
             onSuggestionSelect?.(suggestion)
           }}
           language={language}
           countryRestriction={countryRestriction}
         />
-        <label>
-          Calle
-          <input
-            value={streetParts.street}
-            onChange={(e) => handleStreetChange(e.target.value)}
-            name="address_1"
-            placeholder={messages?.address_1Placeholder || 'Calle Maceo'}
-          />
-        </label>
-        <label>
-          Número
-          <input
-            value={streetParts.number}
-            onChange={(e) => handleNumberChange(e.target.value)}
-            name="address_number"
-            placeholder="123"
-          />
-        </label>
-        <label>
-          Entre calle 1
-          <input
-            value={entre1}
-            onChange={(e) => setEntre1(e.target.value)}
-            name="address_between1"
-            placeholder="Figueredo"
-          />
-        </label>
-        <label>
-          Y calle 2
-          <input
-            value={entre2}
-            onChange={(e) => setEntre2(e.target.value)}
-            name="address_between2"
-            placeholder="Lora"
-          />
-        </label>
-        <label>
-          Municipio
-          <input
-            value={address.city}
-            onChange={(e) => handleChange('city', e.target.value)}
-            name="city"
-            placeholder={messages?.cityPlaceholder || 'Bayamo'}
-          />
-        </label>
-        <label>
-          Provincia
-          <input
-            value={address.province ?? ''}
-            onChange={(e) => handleChange('province', e.target.value)}
-            name="province"
-            placeholder={messages?.provincePlaceholder || 'Granma'}
-          />
-        </label>
-        <label>
-          País
-          <input
-            value={address.country_code}
-            onChange={(e) => handleChange('country_code', e.target.value)}
-            name="country_code"
-            placeholder={messages?.countryPlaceholder || 'cu'}
-          />
-        </label>
+        <fieldset>
+          <legend>Dirección exacta</legend>
+          <label>
+            Calle
+            {verified === 'ok' && (
+              <span role="img" aria-label="dirección verificada" title="Dirección verificada" style={{ color: 'green' }}> ✓</span>
+            )}
+            {verified === 'fail' && (
+              <span role="img" aria-label="dirección no verificada" title="No verificada" style={{ color: '#b58900' }}> ⚠</span>
+            )}
+            <input
+              value={streetParts.street}
+              onChange={(e) => handleStreetChange(e.target.value)}
+              name="address_1"
+              placeholder={messages?.address_1Placeholder || 'Calle Maceo'}
+            />
+          </label>
+          <label>
+            Número
+            <input
+              value={streetParts.number}
+              onChange={(e) => handleNumberChange(e.target.value)}
+              name="address_number"
+              placeholder="123"
+            />
+          </label>
+          <label>
+            Entre calle 1
+            <input
+              value={entre1}
+              onChange={(e) => { setEntre1(e.target.value); setVerified('idle') }}
+              name="address_between1"
+              placeholder="Figueredo"
+            />
+          </label>
+          <label>
+            Y calle 2
+            <input
+              value={entre2}
+              onChange={(e) => { setEntre2(e.target.value); setVerified('idle') }}
+              name="address_between2"
+              placeholder="Lora"
+            />
+          </label>
+        </fieldset>
+        <fieldset>
+          <legend>Ubicación administrativa</legend>
+          <label>
+            Municipio
+            {useCubaSelects ? (
+              <select value={address.city} onChange={(e) => handleChange('city', e.target.value)} name="city">
+                <option value="">Selecciona municipio</option>
+                {Array.from(new Set([address.city, ...cubaCities].filter(Boolean))).map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                value={address.city}
+                onChange={(e) => handleChange('city', e.target.value)}
+                name="city"
+                placeholder={messages?.cityPlaceholder || 'Bayamo'}
+              />
+            )}
+          </label>
+          <label>
+            Provincia
+            {useCubaSelects ? (
+              <select value={address.province ?? ''} onChange={(e) => handleProvinceChange(e.target.value)} name="province">
+                <option value="">Selecciona provincia</option>
+                {Array.from(new Set([address.province ?? '', ...cubaProvinces].filter(Boolean))).map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                value={address.province ?? ''}
+                onChange={(e) => handleChange('province', e.target.value)}
+                name="province"
+                placeholder={messages?.provincePlaceholder || 'Granma'}
+              />
+            )}
+          </label>
+          <label>
+            País
+            <input
+              value={address.country_code}
+              onChange={(e) => handleChange('country_code', e.target.value)}
+              name="country_code"
+              placeholder={messages?.countryPlaceholder || 'cu'}
+            />
+          </label>
+        </fieldset>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
           {showLocationButton && (
             <LocationButton onLocation={handleLocationFound} />
           )}
-          <button type="button" onClick={verifyOnMap} disabled={verifying}>
-            {verifying ? 'Verificando…' : '✓ Verificar en el mapa'}
+          <button
+            type="button"
+            onClick={verifyOnMap}
+            disabled={verifying}
+            style={
+              verifying
+                ? {}
+                : verified === 'ok'
+                  ? { backgroundColor: '#dcfce7', borderColor: '#16a34a', color: '#166534' }
+                  : verified === 'fail'
+                    ? { backgroundColor: '#fef9c3', borderColor: '#ca8a04', color: '#854d0e' }
+                    : {}
+            }
+          >
+            {verifying ? 'Verificando...' : verified === 'ok' ? '✓ Verificada' : verified === 'fail' ? '⚠ No verificada' : '✓ Verificar dirección'}
           </button>
           {verifyStatus && <small role="status">{verifyStatus}</small>}
         </div>
         {showMap && isMapLibreAvailable && (
-          <>
+          <div style={{ marginTop: 8 }}>
             <MapView coordinates={coordinates} onMarkerDrag={handleMarkerDrag} />
-            <small>
-              Pin: {coordinates ? `${coordinates.latitude.toFixed(5)}, ${coordinates.longitude.toFixed(5)}` : 'sin ubicación'}
-              {coordinates?.accuracy != null ? ` (accuracy: ${Math.round(coordinates.accuracy)}m)` : ''} · Dirección
-              detectada: {[address.address_1, address.city].filter(Boolean).join(', ') || '—'}
-            </small>
-          </>
+            <div style={{ marginTop: 4 }}>
+              <div>📍 Ubicación seleccionada</div>
+              <div>{[address.address_1, address.city].filter(Boolean).join(', ') || '—'}</div>
+              <div>
+                Precisión: {coordinates?.accuracy != null ? `${Math.round(coordinates.accuracy)}m` : 'desconocida'}{' '}
+                {coordinates?.accuracy != null ? (coordinates.accuracy <= 100 ? '✓' : '⚠') : ''}
+              </div>
+              <small>Ajusta el pin si no es exacto</small>
+            </div>
+          </div>
         )}
         <button type="submit" disabled={loadingSuggestions}>
           {messages?.save || 'Guardar'}
