@@ -11,5 +11,7 @@ export { createLocationIQProvider, createBigDataCloudProvider, createGraphHopper
 export { validateAddress, AddressDataSchema, CoordinatesSchema } from './lib/validators'
 export type { AddressFormHandle, AddressFormCallbacks, AddressFormHeadlessState } from './lib/types'
 export type { Messages, defaultMessages, mergeMessages } from './lib/messages'
+export { parseCubanAddress, buildForwardQuery } from './lib/cuban-address-parser'
+export type { CubanAddressParts } from './lib/cuban-address-parser'
 export * from './lib/types'
 export * from './lib/providers'
