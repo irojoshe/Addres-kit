@@ -4,6 +4,7 @@ import { AddressPicker } from './AddressPicker'
 import { LocationButton } from './LocationButton'
 import { MapView } from './MapView'
 import { createDefaultAddressProvider, createPhotonProvider } from '../lib/providers'
+import { parseCubanAddress } from '../lib/cuban-address-parser'
 import { useAddressForm } from '../hooks/useAddressForm'
 import type { AddressData, AddressFormCallbacks, AddressFormHandle, AddressProvider, Coordinates, Suggestion, GeolocationError } from '../lib/types'
 import { mergeMessages, type Messages } from '../lib/messages'
@@ -74,6 +75,10 @@ export const AddressForm = forwardRef<AddressFormHandle, AddressFormProps>(
     const [query, setQuery] = useState('')
     const [suggestions, setSuggestions] = useState<Suggestion[]>([])
     const [loadingSuggestions, setLoadingSuggestions] = useState(false)
+    // Entre-calles cubanas: estado local (el provider no las devuelve).
+    // En el submit se componen en address_2 como "Entre X y Y".
+    const [entre1, setEntre1] = useState('')
+    const [entre2, setEntre2] = useState('')
 
     const reset = useCallback(() => {
       resetAddress()
@@ -83,12 +88,26 @@ export const AddressForm = forwardRef<AddressFormHandle, AddressFormProps>(
       setQuery('')
       setSuggestions([])
       setLoadingSuggestions(false)
+      setEntre1('')
+      setEntre2('')
+      setVerifyStatus(null)
     }, [resetAddress, initialCoordinates])
 
-    const getValues = useCallback(() => ({
-      ...address,
-      coordinates: coordinates ?? undefined,
-    }), [address, coordinates])
+    // address_1 guarda "Calle [#número]"; se deriva para los inputs.
+    const streetParts = parseCubanAddress(address.address_1 || '')
+
+    // Payload final: compone "Entre X y Y" en address_2 si están ambas.
+    const buildPayload = useCallback((): AddressData => {
+      const entre =
+        entre1.trim() && entre2.trim() ? `Entre ${entre1.trim()} y ${entre2.trim()}` : ''
+      return {
+        ...address,
+        address_2: entre || address.address_2,
+        coordinates: coordinates ?? undefined,
+      } as AddressData
+    }, [address, coordinates, entre1, entre2])
+
+    const getValues = useCallback(() => buildPayload(), [buildPayload])
 
     const setValues = useCallback((values: Partial<AddressData>) => {
       const { coordinates: coords, ...rest } = values
@@ -123,6 +142,17 @@ export const AddressForm = forwardRef<AddressFormHandle, AddressFormProps>(
       onAddressChange?.(next)
     }
 
+    const handleStreetChange = (value: string) => {
+      const num = streetParts.number
+      handleChange('address_1', num ? `${value} #${num}` : value)
+    }
+
+    const handleNumberChange = (value: string) => {
+      const clean = value.replace(/#/g, '').trim()
+      const street = streetParts.street
+      handleChange('address_1', clean ? (street ? `${street} #${clean}` : `#${clean}`) : street)
+    }
+
     // Estable (useCallback): LocationButton dispara onLocation en un useEffect
     // y un callback inline re-crearía el bucle de 300 requests.
     const handleLocationFound = useCallback(async (coords: Coordinates) => {
@@ -140,6 +170,8 @@ export const AddressForm = forwardRef<AddressFormHandle, AddressFormProps>(
         const fields = await addressProvider.reverse(coords, { language })
         console.log('[geo] reverse OK:', fields)
         setAddressFromData({ ...fields, coordinates: coords, source: 'geolocation', verified: true })
+        setEntre1('')
+        setEntre2('')
         onLocationFound?.(coords)
       } catch (err) {
         console.error('[geo] reverse ERROR:', err)
@@ -153,6 +185,8 @@ export const AddressForm = forwardRef<AddressFormHandle, AddressFormProps>(
       try {
         const fields = await addressProvider.reverse(coords, { language })
         setAddressFromData({ ...fields, coordinates: coords, source: 'manual', verified: false })
+        setEntre1('')
+        setEntre2('')
       } catch {
         // Se conserva el pin aunque falle el reverse
       }
@@ -213,9 +247,10 @@ export const AddressForm = forwardRef<AddressFormHandle, AddressFormProps>(
         onError?.({ code: 'validation', message: result.error })
         return
       }
-      await onSubmit(address as AddressData)
+      const payload = buildPayload()
+      await onSubmit(payload)
       setSuccess(true)
-      onAddressSubmit?.(address as AddressData)
+      onAddressSubmit?.(payload)
     }
 
     // Focus automático en address_1 al montar (no address_2 como antes)
@@ -240,27 +275,56 @@ export const AddressForm = forwardRef<AddressFormHandle, AddressFormProps>(
             })
             setCoordinates(suggestion.coordinates)
             setSuggestions([])
+            setEntre1('')
+            setEntre2('')
             onSuggestionSelect?.(suggestion)
           }}
           language={language}
           countryRestriction={countryRestriction}
         />
         <label>
-          Dirección
+          Calle
           <input
-            value={address.address_1}
-            onChange={(e) => handleChange('address_1', e.target.value)}
+            value={streetParts.street}
+            onChange={(e) => handleStreetChange(e.target.value)}
             name="address_1"
-            placeholder={messages?.address_1Placeholder || 'Calle, número'}
+            placeholder={messages?.address_1Placeholder || 'Calle Maceo'}
           />
         </label>
         <label>
-          Ciudad
+          Número
+          <input
+            value={streetParts.number}
+            onChange={(e) => handleNumberChange(e.target.value)}
+            name="address_number"
+            placeholder="123"
+          />
+        </label>
+        <label>
+          Entre calle 1
+          <input
+            value={entre1}
+            onChange={(e) => setEntre1(e.target.value)}
+            name="address_between1"
+            placeholder="Figueredo"
+          />
+        </label>
+        <label>
+          Y calle 2
+          <input
+            value={entre2}
+            onChange={(e) => setEntre2(e.target.value)}
+            name="address_between2"
+            placeholder="Lora"
+          />
+        </label>
+        <label>
+          Municipio
           <input
             value={address.city}
             onChange={(e) => handleChange('city', e.target.value)}
             name="city"
-            placeholder={messages?.cityPlaceholder || 'Ciudad'}
+            placeholder={messages?.cityPlaceholder || 'Bayamo'}
           />
         </label>
         <label>
@@ -269,16 +333,7 @@ export const AddressForm = forwardRef<AddressFormHandle, AddressFormProps>(
             value={address.province ?? ''}
             onChange={(e) => handleChange('province', e.target.value)}
             name="province"
-            placeholder={messages?.provincePlaceholder || 'Provincia o estado'}
-          />
-        </label>
-        <label>
-          Código postal
-          <input
-            value={address.postal_code ?? ''}
-            onChange={(e) => handleChange('postal_code', e.target.value)}
-            name="postal_code"
-            placeholder={messages?.postalCodePlaceholder || 'Código postal'}
+            placeholder={messages?.provincePlaceholder || 'Granma'}
           />
         </label>
         <label>
@@ -287,19 +342,28 @@ export const AddressForm = forwardRef<AddressFormHandle, AddressFormProps>(
             value={address.country_code}
             onChange={(e) => handleChange('country_code', e.target.value)}
             name="country_code"
-            placeholder={messages?.countryPlaceholder || 'País'}
+            placeholder={messages?.countryPlaceholder || 'cu'}
           />
         </label>
-        {showMap && isMapLibreAvailable && <MapView coordinates={coordinates} onMarkerDrag={handleMarkerDrag} />}
-        {showLocationButton && (
-          <LocationButton onLocation={handleLocationFound} />
-        )}
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+          {showLocationButton && (
+            <LocationButton onLocation={handleLocationFound} />
+          )}
           <button type="button" onClick={verifyOnMap} disabled={verifying}>
             {verifying ? 'Verificando…' : '✓ Verificar en el mapa'}
           </button>
           {verifyStatus && <small role="status">{verifyStatus}</small>}
         </div>
+        {showMap && isMapLibreAvailable && (
+          <>
+            <MapView coordinates={coordinates} onMarkerDrag={handleMarkerDrag} />
+            <small>
+              Pin: {coordinates ? `${coordinates.latitude.toFixed(5)}, ${coordinates.longitude.toFixed(5)}` : 'sin ubicación'}
+              {coordinates?.accuracy != null ? ` (accuracy: ${Math.round(coordinates.accuracy)}m)` : ''} · Dirección
+              detectada: {[address.address_1, address.city].filter(Boolean).join(', ') || '—'}
+            </small>
+          </>
+        )}
         <button type="submit" disabled={loadingSuggestions}>
           {messages?.save || 'Guardar'}
         </button>
